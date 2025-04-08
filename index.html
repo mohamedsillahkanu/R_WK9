@@ -1,0 +1,1872 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Week 9: Automating Data Processing with R</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <button class="sidebar-toggle" id="sidebar-toggle">Menu</button>
+    
+    <div class="sidebar" id="sidebar">
+        <h3>Course Navigation</h3>
+        <ul>
+            <li class="menu-item">
+                <a href="#week9">📅 Week 9: Automating Data Processing</a>
+                <ul class="sub-menu">
+                    <li><a href="#functions-loops">Functions & Loops</a></li>
+                    <li><a href="#rmarkdown">R Markdown Reports</a></li>
+                    <li><a href="#apis">Working with APIs</a></li>
+                </ul>
+            </li>
+        </ul>
+    </div>
+    
+    <div class="container">
+        <h1 id="week9">📅 Week 9: Automating Data Processing with R</h1>
+        
+        <p>This week, we will:<br>
+        ✅ <strong>Write functions & loops</strong> for repetitive malaria data tasks<br>
+        ✅ <strong>Create automated reports</strong> using R Markdown<br>
+        ✅ <strong>Access external data</strong> using APIs (CHIRPS rainfall, WorldPop)</p>
+        
+        <hr>
+        
+        <h2 id="functions-loops">1️⃣ Writing Functions & Loops for Malaria Data</h2>
+        
+        <h3>Why Automate Data Processing?</h3>
+        <p>📌 <strong>Automation</strong> increases efficiency, reduces errors, and ensures consistency when processing malaria surveillance data.</p>
+        
+        <h3>Step 1: Writing Custom Functions</h3>
+        <div class="r-code">
+            <pre><code>
+# Basic function structure for malaria data processing
+calculate_incidence <- function(cases, population, per = 1000) {
+  # Calculate incidence rate per specified population unit
+  incidence <- (cases / population) * per
+  return(incidence)
+}
+
+# Test the function
+test_cases <- c(45, 67, 89, 120)
+test_pop <- c(15000, 22000, 25000, 30000)
+test_incidence <- calculate_incidence(test_cases, test_pop)
+print(test_incidence)
+
+# More complex function with multiple parameters and default values
+summarize_outbreak <- function(data, threshold = 10, by_region = TRUE, 
+                              moving_avg = FALSE, window = 3) {
+  # Identify outbreaks based on threshold 
+  data$is_outbreak <- data$cases > threshold
+  
+  # Calculate summary statistics
+  if (by_region) {
+    summary_data <- data %>%
+      group_by(region) %>%
+      summarize(
+        total_cases = sum(cases, na.rm = TRUE),
+        outbreak_days = sum(is_outbreak, na.rm = TRUE),
+        max_cases = max(cases, na.rm = TRUE),
+        mean_cases = mean(cases, na.rm = TRUE)
+      )
+  } else {
+    summary_data <- data %>%
+      summarize(
+        total_cases = sum(cases, na.rm = TRUE),
+        outbreak_days = sum(is_outbreak, na.rm = TRUE),
+        max_cases = max(cases, na.rm = TRUE),
+        mean_cases = mean(cases, na.rm = TRUE)
+      )
+  }
+  
+  # Apply moving average if requested
+  if (moving_avg && "date" %in% colnames(data)) {
+    data <- data %>%
+      arrange(date) %>%
+      mutate(moving_avg_cases = zoo::rollmean(cases, k = window, 
+                                           fill = NA, align = "right"))
+  }
+  
+  # Return a list containing both summaries and processed data
+  return(list(
+    summary = summary_data,
+    processed_data = if(moving_avg) data else NULL
+  ))
+}
+
+# Test the complex function
+outbreak_analysis <- summarize_outbreak(
+  malaria_data, 
+  threshold = 15, 
+  by_region = TRUE,
+  moving_avg = TRUE
+)
+
+# Access results
+print(outbreak_analysis$summary)
+
+# Plot the results if moving average was calculated
+if (!is.null(outbreak_analysis$processed_data)) {
+  ggplot(outbreak_analysis$processed_data, aes(x = date)) +
+    geom_line(aes(y = cases), color = "darkgray") +
+    geom_line(aes(y = moving_avg_cases), color = "red", size = 1) +
+    geom_hline(yintercept = 15, linetype = "dashed", color = "blue") +
+    facet_wrap(~region) +
+    labs(
+      title = "Malaria Cases with Moving Average by Region",
+      subtitle = "Blue line indicates outbreak threshold",
+      x = "Date",
+      y = "Number of Cases"
+    ) +
+    theme_minimal()
+}
+            </code></pre>
+        </div>
+        
+        <div class="explanation">
+            <h4>🔍 Explanation:</h4>
+            <p>✔ Functions allow you to reuse code without copy-pasting<br>
+            ✔ Parameters with default values increase flexibility<br>
+            ✔ Functions can return multiple outputs as a list<br>
+            ✔ Well-documented functions make your code more readable and maintainable</p>
+        </div>
+        
+        <hr>
+        
+        <h3>Step 2: Using Loops for Batch Processing</h3>
+        <div class="r-code">
+            <pre><code>
+# For loop to process multiple data files
+districts <- c("Kilifi", "Kwale", "Mombasa", "Taita_Taveta")
+all_districts_data <- list()
+
+for (district in districts) {
+  # Construct file path
+  file_path <- paste0("data/", district, "_malaria_2023.csv")
+  
+  # Check if file exists
+  if (file.exists(file_path)) {
+    # Read data
+    district_data <- read.csv(file_path)
+    
+    # Process data (example: add incidence column)
+    if ("population" %in% colnames(district_data)) {
+      district_data$incidence <- calculate_incidence(
+        district_data$cases, 
+        district_data$population
+      )
+    }
+    
+    # Store in list
+    all_districts_data[[district]] <- district_data
+    
+    # Print progress
+    cat("Processed data for", district, "district\n")
+  } else {
+    warning(paste("File not found:", file_path))
+  }
+}
+
+# Combine all data
+combined_data <- do.call(rbind, all_districts_data)
+
+# Alternative using lapply (more R-like approach)
+process_district_file <- function(district) {
+  file_path <- paste0("data/", district, "_malaria_2023.csv")
+  
+  if (!file.exists(file_path)) {
+    warning(paste("File not found:", file_path))
+    return(NULL)
+  }
+  
+  # Read and process data
+  district_data <- read.csv(file_path)
+  district_data$district <- district  # Add district column
+  
+  if ("population" %in% colnames(district_data)) {
+    district_data$incidence <- calculate_incidence(
+      district_data$cases, 
+      district_data$population
+    )
+  }
+  
+  return(district_data)
+}
+
+# Apply the function to all districts
+all_data <- lapply(districts, process_district_file)
+
+# Remove NULL elements (missing files) and combine
+all_data <- all_data[!sapply(all_data, is.null)]
+combined_data_lapply <- do.call(rbind, all_data)
+            </code></pre>
+        </div>
+        
+        <div class="explanation">
+            <h4>🔍 Explanation:</h4>
+            <p>✔ Loops automate repetitive tasks like processing multiple files<br>
+            ✔ <code>for</code> loops are intuitive but not always the most efficient in R<br>
+            ✔ <code>lapply()</code> applies a function to each element in a list (more "R-like")<br>
+            ✔ Error handling prevents your loop from stopping when it encounters problems</p>
+        </div>
+        
+        <hr>
+        
+        <h3>Step 3: Using Apply Functions for Efficient Processing</h3>
+        <div class="r-code">
+            <pre><code>
+# The apply family of functions is more efficient than loops in R
+
+# Apply a function to each row of a data frame (calculate risk scores)
+risk_score <- function(cases, rainfall, temperature, population_density) {
+  # Simple weighted risk score formula (customize for your needs)
+  score <- (cases * 0.4) + (rainfall * 0.3) + (temperature * 0.2) + 
+          (population_density * 0.1)
+  return(score)
+}
+
+# Use apply() to calculate risk for each row
+malaria_data$risk_score <- apply(
+  malaria_data[, c("cases", "rainfall", "temperature", "population_density")],
+  1,  # 1 for rows, 2 for columns
+  function(row) risk_score(row[1], row[2], row[3], row[4])
+)
+
+# sapply() to process each month's data
+months <- unique(malaria_data$month)
+monthly_peak <- sapply(months, function(m) {
+  monthly_data <- subset(malaria_data, month == m)
+  max(monthly_data$cases)
+})
+
+# Create a data frame of results
+monthly_peaks <- data.frame(
+  month = months,
+  peak_cases = monthly_peak
+)
+
+# Visualize results
+ggplot(monthly_peaks, aes(x = factor(month), y = peak_cases)) +
+  geom_bar(stat = "identity", fill = "steelblue") +
+  labs(
+    title = "Peak Malaria Cases by Month",
+    x = "Month",
+    y = "Peak Number of Cases"
+  ) +
+  theme_minimal()
+
+# tapply() to calculate statistics by group
+region_means <- with(malaria_data, 
+                    tapply(cases, region, mean, na.rm = TRUE))
+print(region_means)
+
+# mapply() to work with multiple parallel vectors
+calculate_combined_metric <- function(cases, rainfall, population) {
+  # Example metric: cases per 1000 * rainfall intensity
+  incidence <- (cases / population) * 1000
+  metric <- incidence * sqrt(rainfall)
+  return(round(metric, 2))
+}
+
+regions <- unique(malaria_data$region)
+region_summary <- data.frame(region = regions)
+
+region_summary$cases <- sapply(regions, function(r) {
+  mean(malaria_data$cases[malaria_data$region == r], na.rm = TRUE)
+})
+
+region_summary$rainfall <- sapply(regions, function(r) {
+  mean(malaria_data$rainfall[malaria_data$region == r], na.rm = TRUE)
+})
+
+region_summary$population <- sapply(regions, function(r) {
+  mean(malaria_data$population[malaria_data$region == r], na.rm = TRUE)
+})
+
+region_summary$metric <- mapply(
+  calculate_combined_metric,
+  region_summary$cases,
+  region_summary$rainfall,
+  region_summary$population
+)
+
+print(region_summary)
+            </code></pre>
+        </div>
+        
+        <div class="explanation">
+            <h4>🔍 Explanation:</h4>
+            <p>✔ The <code>apply()</code> family of functions is more efficient than loops in R<br>
+            ✔ <code>apply()</code> - Apply a function to margins of an array or matrix<br>
+            ✔ <code>sapply()</code> - Apply a function to each element and simplify results<br>
+            ✔ <code>tapply()</code> - Apply a function to subsets defined by factors<br>
+            ✔ <code>mapply()</code> - Apply a function to multiple lists or vectors in parallel</p>
+        </div>
+        
+        <hr>
+        
+        <h3>Step 4: Functional Programming with purrr</h3>
+        <div class="r-code">
+            <pre><code>
+# Install and load purrr package
+install.packages("purrr")
+library(purrr)
+
+# map() functions are easier to read and more consistent than base R apply functions
+# Process multiple datasets with map()
+district_files <- list.files("data", pattern = "*_malaria_2023.csv", full.names = TRUE)
+
+# Read all files
+district_data <- map(district_files, read.csv)
+
+# Extract district names from filenames
+district_names <- map_chr(district_files, function(file) {
+  # Extract filename from path and remove extension
+  filename <- tools::file_path_sans_ext(basename(file))
+  # Extract district name (assuming format: "District_malaria_2023")
+  strsplit(filename, "_")[[1]][1]
+})
+
+# Name the list elements
+names(district_data) <- district_names
+
+# Calculate summary statistics for each district
+district_summaries <- map(district_data, function(data) {
+  list(
+    mean_cases = mean(data$cases, na.rm = TRUE),
+    total_cases = sum(data$cases, na.rm = TRUE),
+    peak_cases = max(data$cases, na.rm = TRUE),
+    peak_month = data$month[which.max(data$cases)]
+  )
+})
+
+# Convert list of summaries to a data frame
+summary_df <- map_df(district_summaries, ~as.data.frame(.x), .id = "district")
+
+# Plot summary results
+ggplot(summary_df, aes(x = reorder(district, total_cases), y = total_cases)) +
+  geom_bar(stat = "identity", fill = "steelblue") +
+  geom_text(aes(label = peak_month), vjust = -0.5) +
+  labs(
+    title = "Total Malaria Cases by District in 2023",
+    subtitle = "Numbers indicate peak month",
+    x = "District",
+    y = "Total Cases"
+  ) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+# Using purrr for nested data
+nested_data <- malaria_data %>%
+  group_by(region) %>%
+  nest()  # Creates a nested data frame
+
+# Apply a model to each region
+nested_data <- nested_data %>%
+  mutate(
+    # Fit linear model for each region
+    model = map(data, ~lm(cases ~ rainfall + temperature, data = .x)),
+    # Extract model summaries
+    coefs = map(model, broom::tidy),
+    # Extract R-squared
+    r_squared = map_dbl(model, ~summary(.x)$r.squared)
+  )
+
+# Unnest the coefficients
+coef_df <- nested_data %>%
+  select(region, coefs) %>%
+  unnest(coefs)
+
+# Compare rainfall effect across regions
+rainfall_effects <- coef_df %>%
+  filter(term == "rainfall") %>%
+  arrange(desc(estimate))
+
+ggplot(rainfall_effects, aes(x = reorder(region, estimate), y = estimate)) +
+  geom_point(size = 3) +
+  geom_errorbar(aes(ymin = estimate - std.error, ymax = estimate + std.error), 
+               width = 0.2) +
+  labs(
+    title = "Effect of Rainfall on Malaria Cases by Region",
+    subtitle = "From linear regression models controlling for temperature",
+    x = "Region",
+    y = "Coefficient (Effect Size)"
+  ) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+            </code></pre>
+        </div>
+        
+        <div class="explanation">
+            <h4>🔍 Explanation:</h4>
+            <p>✔ <code>purrr</code> provides a consistent, pipe-friendly way to apply functions to data<br>
+            ✔ <code>map()</code> applies a function to each element of a list or vector<br>
+            ✔ <code>map_*()</code> variants automatically convert output to specific types<br>
+            ✔ Nested data frames are a powerful way to organize grouped analyses<br>
+            ✔ <code>nest()</code> and <code>unnest()</code> help manage complex data structures</p>
+        </div>
+        
+        <hr>
+        
+        <h2 id="rmarkdown">2️⃣ Automating Reporting with R Markdown</h2>
+        
+        <h3>Step 1: Creating Basic R Markdown Reports</h3>
+        <div class="r-code">
+            <pre><code>
+---
+title: "Monthly Malaria Surveillance Report"
+author: "Malaria Surveillance Team"
+date: "`r format(Sys.Date(), '%B %d, %Y')`"
+output: 
+  html_document:
+    toc: true
+    toc_float: true
+    theme: cerulean
+    highlight: tango
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = FALSE,      # Don't show code
+  warning = FALSE,   # Don't show warnings
+  message = FALSE,   # Don't show messages
+  fig.width = 10,    # Default figure width
+  fig.height = 6     # Default figure height
+)
+
+# Load required packages
+library(dplyr)
+library(ggplot2)
+library(knitr)
+library(kableExtra)
+
+# Load data
+malaria_data <- read.csv("malaria_data.csv")
+current_month <- max(malaria_data$month)
+current_year <- max(malaria_data$year)
+```
+
+## Executive Summary
+
+This report provides an overview of malaria cases in the monitored regions for 
+`r format(as.Date(paste(current_year, current_month, "01", sep="-")), "%B %Y")`.
+
+```{r summary_stats}
+# Calculate summary statistics
+monthly_data <- malaria_data %>%
+  filter(year == current_year, month == current_month)
+
+total_cases <- sum(monthly_data$cases, na.rm = TRUE)
+average_cases <- mean(monthly_data$cases, na.rm = TRUE)
+max_region <- monthly_data$region[which.max(monthly_data$cases)]
+max_cases <- max(monthly_data$cases, na.rm = TRUE)
+
+# Previous month for comparison
+prev_month <- if(current_month == 1) 12 else current_month - 1
+prev_year <- if(current_month == 1) current_year - 1 else current_year
+prev_data <- malaria_data %>%
+  filter(year == prev_year, month == prev_month)
+prev_total <- sum(prev_data$cases, na.rm = TRUE)
+
+# Calculate percent change
+percent_change <- ((total_cases - prev_total) / prev_total) * 100
+change_direction <- ifelse(percent_change > 0, "increase", "decrease")
+```
+
+**Key Findings:**
+
+* Total reported cases: **`r format(total_cases, big.mark=",")`**
+* `r abs(round(percent_change))`% `r change_direction` from previous month
+* Region with highest case count: **`r max_region`** (`r format(max_cases, big.mark=",")` cases)
+* Average cases per region: **`r round(average_cases)`**
+
+## Detailed Analysis by Region
+
+```{r regional_analysis}
+# Create regional summary
+region_summary <- monthly_data %>%
+  group_by(region) %>%
+  summarize(
+    cases = sum(cases, na.rm = TRUE),
+    population = mean(population, na.rm = TRUE),
+    incidence = round((cases / population) * 1000, 2)
+  ) %>%
+  arrange(desc(cases))
+
+# Create formatted table
+kable(region_summary, 
+      col.names = c("Region", "Total Cases", "Population", "Incidence per 1,000"),
+      caption = "Regional Malaria Summary") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"))
+```
+
+```{r region_chart}
+# Plot cases by region
+ggplot(region_summary, aes(x = reorder(region, -cases), y = cases)) +
+  geom_bar(stat = "identity", fill = "steelblue") +
+  labs(
+    title = paste("Malaria Cases by Region -", 
+                 format(as.Date(paste(current_year, current_month, "01", sep="-")), "%B %Y")),
+    x = "Region",
+    y = "Number of Cases"
+  ) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+## Trend Analysis
+
+```{r trends}
+# Get data for the last 12 months
+trend_data <- malaria_data %>%
+  mutate(date = as.Date(paste(year, month, "01", sep="-"))) %>%
+  filter(date >= as.Date(paste(current_year, current_month, "01", sep="-")) - 365) %>%
+  group_by(date) %>%
+  summarize(total_cases = sum(cases, na.rm = TRUE))
+
+# Plot time series
+ggplot(trend_data, aes(x = date, y = total_cases)) +
+  geom_line(color = "steelblue", size = 1) +
+  geom_point(color = "darkblue", size = 2) +
+  labs(
+    title = "Malaria Cases - 12 Month Trend",
+    x = "Month",
+    y = "Total Cases"
+  ) +
+  scale_x_date(date_labels = "%b %Y", date_breaks = "1 month") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+## Environmental Risk Factors
+
+```{r risk_factors}
+# Analyze relationship with rainfall
+rainfall_data <- monthly_data %>%
+  group_by(region) %>%
+  summarize(
+    cases = sum(cases, na.rm = TRUE),
+    avg_rainfall = mean(rainfall, na.rm = TRUE)
+  )
+
+ggplot(rainfall_data, aes(x = avg_rainfall, y = cases)) +
+  geom_point(aes(size = cases), alpha = 0.7) +
+  geom_text(aes(label = region), vjust = -1, size = 3) +
+  geom_smooth(method = "lm", se = TRUE, color = "red") +
+  labs(
+    title = "Relationship Between Rainfall and Malaria Cases",
+    x = "Average Rainfall (mm)",
+    y = "Total Cases"
+  ) +
+  theme_minimal()
+```
+
+## Recommendations
+
+Based on the current malaria situation, we recommend:
+
+1. Intensify vector control in **`r max_region`** region where cases are highest
+2. Prepare for potential increases in areas with high rainfall
+3. Continue monitoring environmental factors, especially in regions showing rapid increases
+
+## Appendix: Data Sources and Methods
+
+This report uses data collected from regional health facilities and combined with 
+environmental data from meteorological stations. Incidence rates are calculated 
+per 1,000 population using the most recent census estimates.
+
+```{r data_quality, echo=TRUE}
+# Data quality summary - show missing values
+missing_data <- colSums(is.na(monthly_data)) / nrow(monthly_data) * 100
+print(paste("Percentage of missing values in current month's data:"))
+print(missing_data)
+```
+            </code></pre>
+        </div>
+        
+        <div class="explanation">
+            <h4>🔍 Explanation:</h4>
+            <p>✔ R Markdown combines text, code, and outputs in a single document<br>
+            ✔ YAML header (between ---) sets document properties<br>
+            ✔ Code chunks (between ```{r}) contain R code to be executed<br>
+            ✔ <code>knitr::opts_chunk$set()</code> sets global options for all chunks<br>
+            ✔ Inline R code (```r ...) dynamically inserts values into text</p>
+        </div>
+        
+        <hr>
+        
+        <h3>Step 2: Parameterized Reports</h3>
+        <div class="r-code">
+            <pre><code>
+---
+title: "Malaria Surveillance Report"
+author: "Malaria Surveillance Team"
+date: "`r format(Sys.Date(), '%B %d, %Y')`"
+output: 
+  html_document:
+    toc: true
+    toc_float: true
+    theme: cerulean
+params:
+  region: "All"
+  year: 2023
+  month: 12
+  threshold: 50
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE)
+library(dplyr)
+library(ggplot2)
+library(knitr)
+library(kableExtra)
+
+# Load data
+malaria_data <- read.csv("malaria_data.csv")
+
+# Filter data based on parameters
+filtered_data <- malaria_data %>%
+  filter(year == params$year, month == params$month)
+
+if (params$region != "All") {
+  filtered_data <- filtered_data %>%
+    filter(region == params$region)
+  report_title <- paste("Malaria Report:", params$region, "Region")
+} else {
+  report_title <- "Malaria Report: All Regions"
+}
+```
+
+# `r report_title`
+
+Report period: **`r format(as.Date(paste(params$year, params$month, "01", sep="-")), "%B %Y")`**
+
+```{r summary}
+# Generate summary statistics based on filtered data
+total_cases <- sum(filtered_data$cases, na.rm = TRUE)
+above_threshold <- sum(filtered_data$cases > params$threshold, na.rm = TRUE)
+percent_above <- above_threshold / nrow(filtered_data) * 100
+
+# Create summary information
+summary_df <- data.frame(
+  Metric = c("Total Cases", "Average Cases", "Locations Above Threshold",
+            "Percent Above Threshold"),
+  Value = c(
+    format(total_cases, big.mark = ","),
+    round(mean(filtered_data$cases, na.rm = TRUE), 1),
+    above_threshold,
+    paste0(round(percent_above, 1), "%")
+  )
+)
+
+kable(summary_df, caption = "Summary Statistics") %>%
+  kable_styling(full_width = FALSE)
+```
+
+## Cases by Location
+
+```{r cases_by_location}
+# If reporting on all regions, show breakdown by region
+if (params$region == "All") {
+  region_summary <- filtered_data %>%
+    group_by(region) %>%
+    summarize(
+      total_cases = sum(cases, na.rm = TRUE),
+      locations = n(),
+      avg_cases = round(mean(cases, na.rm = TRUE), 1),
+      above_threshold = sum(cases > params$threshold)
+    ) %>%
+    arrange(desc(total_cases))
+  
+  kable(region_summary, 
+        caption = paste("Cases by Region (Threshold:", params$threshold, ")")) %>%
+    kable_styling(bootstrap_options = c("striped", "hover"))
+  
+  # Create bar chart
+  ggplot(region_summary, aes(x = reorder(region, -total_cases), y = total_cases)) +
+    geom_bar(stat = "identity", fill = "steelblue") +
+    geom_text(aes(label = total_cases), vjust = -0.5) +
+    labs(
+      title = paste("Total Malaria Cases by Region -",
+                   format(as.Date(paste(params$year, params$month, "01", sep="-")), "%B %Y")),
+      x = "Region",
+      y = "Number of Cases"
+    ) +
+    theme_minimal() +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1))
+} else {
+  # Detailed location breakdown for a specific region
+  location_data <- filtered_data %>%
+    group_by(location) %>%
+    summarize(
+      cases = sum(cases, na.rm = TRUE),
+      population = mean(population, na.rm = TRUE),
+      incidence = round((cases / population) * 1000, 2)
+    ) %>%
+    arrange(desc(cases))
+  
+  kable(location_data, 
+        caption = paste("Cases by Location in", params$region, "Region")) %>%
+    kable_styling(bootstrap_options = c("striped", "hover"))
+  
+  # Show top 15 locations in a chart
+  top_locations <- head(location_data, 15)
+  
+  ggplot(top_locations, aes(x = reorder(location, -cases), y = cases)) +
+    geom_bar(stat = "identity", fill = "steelblue") +
+    geom_hline(yintercept = params$threshold, linetype = "dashed", color = "red") +
+    labs(
+      title = paste("Top 15 Locations with Highest Malaria Cases in", params$region),
+      subtitle = paste("Red line indicates threshold (", params$threshold, ")"),
+      x = "Location",
+      y = "Number of Cases"
+    ) +
+    theme_minimal() +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1))
+}
+```
+
+## Historical Trends
+
+```{r historical_trends}
+# Extract relevant region data for the past 12 months
+if (params$region == "All") {
+  trend_data <- malaria_data %>%
+    filter(date >= as.Date(paste(params$year, params$month, "01", sep="-")) - 365) %>%
+    group_by(year, month) %>%
+    summarize(total_cases = sum(cases, na.rm = TRUE)) %>%
+    mutate(date = as.Date(paste(year, month, "01", sep="-")))
+} else {
+  trend_data <- malaria_data %>%
+    filter(
+      region == params$region,
+      date >= as.Date(paste(params$year, params$month, "01", sep="-")) - 365
+    ) %>%
+    group_by(year, month) %>%
+    summarize(total_cases = sum(cases, na.rm = TRUE)) %>%
+    mutate(date = as.Date(paste(year, month, "01", sep="-")))
+}
+
+# Plot trend
+ggplot(trend_data, aes(x = date, y = total_cases)) +
+  geom_line(color = "steelblue", size = 1) +
+  geom_point(size = 2) +
+  labs(
+    title = paste("12-Month Trend:", if(params$region == "All") "All Regions" else params$region),
+    x = "Month",
+    y = "Total Cases"
+  ) +
+  scale_x_date(date_labels = "%b %Y", date_breaks = "1 month") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+## Risk Assessment
+
+```{r risk_assessment}
+# Create a risk assessment based on cases relative to threshold
+if (params$region != "All") {
+  risk_data <- filtered_data %>%
+    mutate(
+      risk_level = case_when(
+        cases > params$threshold * 1.5 ~ "High",
+        cases > params$threshold ~ "Moderate",
+        TRUE ~ "Low"
+      ),
+      risk_level = factor(risk_level, levels = c("Low", "Moderate", "High"))
+    )
+  
+  # Create risk map (simplified for this example)
+  ggplot(risk_data, aes(x = reorder(location, cases), y = cases, fill = risk_level)) +
+    geom_bar(stat = "identity") +
+    scale_fill_manual(values = c("Low" = "green", "Moderate" = "orange", "High" = "red")) +
+    geom_hline(yintercept = params$threshold, linetype = "dashed") +
+    labs(
+      title = paste("Risk Assessment for", params$region, "Region"),
+      subtitle = paste("Threshold:", params$threshold, "cases"),
+      x = "Location",
+      y = "Cases",
+      fill = "Risk Level"
+    ) +
+    theme_minimal() +
+    theme(axis.text.x = element_text(angle = 90, hjust = 1, size = 8))
+}
+```
+
+# Appendix: Parameter Settings
+
+This report was generated with the following parameters:
+
+- **Region:** `r params$region`
+- **Year:** `r params$year`
+- **Month:** `r params$month`
+- **Threshold:** `r params$threshold`
+            </code></pre>
+        </div>
+        
+        <div class="explanation">
+            <h4>🔍 Explanation:</h4>
+            <p>✔ Parameterized reports allow you to create templates that can be reused<br>
+            ✔ The <code>params</code> section in the YAML header defines parameters<br>
+            ✔ You can render the same report with different parameters to create custom reports<br>
+            ✔ This is useful for creating reports for different regions, time periods, or thresholds<br>
+            ✔ Parameters can be set when rendering from R:</p>
+            
+            <pre><code>
+# Render the same report for different regions
+regions <- c("Coastal", "Western", "Highland", "Central")
+
+for (region in regions) {
+  rmarkdown::render(
+    "malaria_report.Rmd",
+    output_file = paste0("malaria_report_", region, ".html"),
+    params = list(
+      region = region,
+      year = 2023,
+      month = 12,
+      threshold = 50
+    )
+  )
+}
+            </code></pre>
+        </div>
+        
+        <hr>
+        
+        <h3>Step 3: Automated Report Generation</h3>
+        <div class="r-code">
+            <pre><code>
+# Create a script to automate regular report generation (save as generate_reports.R)
+
+# Load necessary libraries
+library(rmarkdown)
+library(dplyr)
+library(lubridate)
+
+# Define report generation function
+generate_monthly_reports <- function(year = NULL, month = NULL) {
+  # Default to previous month if not specified
+  if (is.null(year) || is.null(month)) {
+    previous_month <- floor_date(Sys.Date() - days(1), "month") - days(1)
+    year <- year(previous_month)
+    month <- month(previous_month)
+  }
+  
+  cat("Generating reports for", month.name[month], year, "\n")
+  
+  # Create output directory if it doesn't exist
+  output_dir <- file.path("reports", paste0(year, "-", sprintf("%02d", month)))
+  dir.create(output_dir, recursive = TRUE, showWarnings = FALSE)
+  
+  # Load regions from data
+  malaria_data <- read.csv("malaria_data.csv")
+  regions <- unique(malaria_data$region)
+  
+  # Generate regional reports
+  for (region in regions) {
+    report_file <- file.path(output_dir, paste0("malaria_report_", region, ".html"))
+    
+    # Render the report
+    cat("Generating report for", region, "region...\n")
+    render(
+      "templates/malaria_report_template.Rmd",
+      output_file = report_file,
+      params = list(
+        region = region,
+        year = year,
+        month = month,
+        threshold = 50  # Could be dynamic based on historical data
+      )
+    )
+  }
+  
+  # Generate combined report
+  all_report_file <- file.path(output_dir, "malaria_report_all_regions.html")
+  cat("Generating combined report for all regions...\n")
+  render(
+    "templates/malaria_report_template.Rmd",
+    output_file = all_report_file,
+    params = list(
+      region = "All",
+      year = year,
+      month = month,
+      threshold = 50
+    )
+  )
+  
+  cat("Report generation complete.\n")
+  return(output_dir)
+}
+
+# Function to email reports to stakeholders
+email_reports <- function(report_dir, recipients) {
+  # This is a simplified example - in practice you would use packages like
+  # 'blastula' or 'emayili' for proper email functionality
+  
+  cat("Sending email notifications with report links...\n")
+  
+  # Example using blastula package (install if needed)
+  if (!requireNamespace("blastula", quietly = TRUE)) {
+    install.packages("blastula")
+  }
+  library(blastula)
+  
+  # Create email content
+  report_date <- basename(report_dir)
+  email_content <- compose_email(
+    body = md(paste0(
+      "# Malaria Surveillance Reports: ", report_date, "\n\n",
+      "The latest malaria surveillance reports are now available. Please review them at your earliest convenience.\n\n",
+      "Reports can be accessed at: ", report_dir, "\n\n",
+      "This is an automated message."
+    ))
+  )
+  
+  # Loop through recipients and send emails
+  for (recipient in recipients) {
+    # In a real scenario, you would configure SMTP settings
+    # Below is just an example structure
+    cat("Sending email to", recipient, "\n")
+    
+    # Example (this won't actually work without SMTP configuration)
+    # smtp_send(
+    #   email = email_content,
+    #   to = recipient,
+    #   from = "malaria.surveillance@example.org",
+    #   subject = paste("Malaria Reports:", report_date),
+    #   credentials = creds_file("email_creds")
+    # )
+  }
+  
+  cat("Email notifications sent.\n")
+}
+
+# Set up a schedule to run automatically
+if (!requireNamespace("taskscheduleR", quietly = TRUE)) {
+  install.packages("taskscheduleR")
+}
+library(taskscheduleR)
+
+# Create R script for scheduled execution
+cat('
+# Auto-generated report script
+report_dir <- generate_monthly_reports()
+email_reports(report_dir, c("health.officer@example.org", "district.manager@example.org"))
+', file = "run_monthly_reports.R")
+
+# Schedule task to run on the 3rd day of each month
+taskscheduler_create(
+  taskname = "MonthlyMalariaReports",
+  rscript = "run_monthly_reports.R",
+  schedule = "MONTHLY", 
+  starttime = "08:00",
+  startdate = format(Sys.Date(), "%m/%d/%Y"),
+  days = 3  # Run on 3rd day of month when previous month's data should be complete
+)
+            </code></pre>
+        </div>
+        
+        <div class="explanation">
+            <h4>🔍 Explanation:</h4>
+            <p>✔ Automated reporting enables regular, consistent communication with stakeholders<br>
+            ✔ <code>render()</code> generates reports from R Markdown templates<br>
+            ✔ Functions help organize the process into reusable components<br>
+            ✔ The <code>taskscheduleR</code> package can schedule scripts to run automatically<br>
+            ✔ This approach can be extended to include data cleaning, verification, and distribution steps</p>
+        </div>
+        
+        <hr>
+        
+        <h2 id="apis">3️⃣ Using APIs for Malaria Research Data</h2>
+        
+        <h3>Step 1: Accessing CHIRPS Rainfall Data</h3>
+        <div class="r-code">
+            <pre><code>
+# Install and load necessary packages
+install.packages(c("httr", "jsonlite", "sf", "raster"))
+library(httr)
+library(jsonlite)
+library(sf)
+library(raster)
+library(ggplot2)
+library(dplyr)
+
+# Access CHIRPS rainfall data via API
+# CHIRPS = Climate Hazards Group InfraRed Precipitation with Station data
+
+# Define function to get CHIRPS data for a region and time period
+get_chirps_data <- function(min_lon, min_lat, max_lon, max_lat, 
+                           start_date, end_date, api_key = NULL) {
+  
+  # Base URL for CHIRPS API (using IRI Data Library as interface)
+  base_url <- "https://iridl.ldeo.columbia.edu/SOURCES/.UCSB/.CHIRPS/.v2p0/.daily/.global/.0p05/.prcp"
+  
+  # Format the request
+  request_url <- paste0(
+    base_url,
+    "/X/(", min_lon, ")/", "(", max_lon, ")/RANGEEDGES",
+    "/Y/(", min_lat, ")/", "(", max_lat, ")/RANGEEDGES",
+    "/T/(", start_date, ")/", "(", end_date, ")/RANGEEDGES",
+    "/data.nc"
+  )
+  
+  # Temporary file to store the netCDF data
+  temp_file <- tempfile(fileext = ".nc")
+  
+  # Download the data (this can take time depending on the size)
+  cat("Downloading CHIRPS data...\n")
+  download.file(request_url, temp_file, mode = "wb", quiet = TRUE)
+  
+  # Read the netCDF file
+  chirps_data <- brick(temp_file)
+  
+  # Clean up
+  unlink(temp_file)
+  
+  return(chirps_data)
+}
+
+# Example usage
+# Get rainfall data for western Kenya for January 2023
+kenya_rainfall <- get_chirps_data(
+  min_lon = 34.0, min_lat = -0.5, 
+  max_lon = 35.5, max_lat = 1.0,
+  start_date = "1 Jan 2023", 
+  end_date = "31 Jan 2023"
+)
+
+# Plot the mean rainfall for the period
+mean_rainfall <- calc(kenya_rainfall, mean)
+plot(mean_rainfall, main = "Mean Rainfall (mm/day) - January 2023")
+
+# Convert to a data frame for use with ggplot
+rainfall_df <- as.data.frame(mean_rainfall, xy = TRUE)
+names(rainfall_df)[3] <- "rainfall"
+
+# Create a nicer visualization
+ggplot(rainfall_df, aes(x = x, y = y)) +
+  geom_raster(aes(fill = rainfall)) +
+  scale_fill_viridis_c(option = "plasma", name = "Rainfall (mm/day)") +
+  labs(
+    title = "Mean Daily Rainfall - January 2023",
+    subtitle = "Data from CHIRPS",
+    x = "Longitude",
+    y = "Latitude"
+  ) +
+  theme_minimal() +
+  coord_fixed()
+
+# Extract rainfall values for specific locations
+malaria_sites <- read.csv("malaria_sites.csv")  # Assuming this has lat/long columns
+
+# Create a SpatialPointsDataFrame
+sites_sp <- SpatialPointsDataFrame(
+  coords = malaria_sites[, c("longitude", "latitude")],
+  data = malaria_sites,
+  proj4string = CRS("+proj=longlat +datum=WGS84")
+)
+
+# Extract rainfall values at each site
+sites_rainfall <- extract(mean_rainfall, sites_sp)
+malaria_sites$mean_rainfall <- sites_rainfall
+
+# Combine with malaria data
+malaria_data <- read.csv("malaria_data.csv")
+jan_2023_data <- malaria_data %>%
+  filter(year == 2023, month == 1)
+
+# Merge rainfall data with malaria data
+combined_data <- left_join(
+  jan_2023_data,
+  malaria_sites[, c("site_id", "mean_rainfall")],
+  by = c("site_id" = "site_id")
+)
+
+# Analyze the relationship
+correlation <- cor(combined_data$cases, combined_data$mean_rainfall, 
+                 use = "complete.obs")
+
+# Visualize the relationship
+ggplot(combined_data, aes(x = mean_rainfall, y = cases)) +
+  geom_point(alpha = 0.6) +
+  geom_smooth(method = "lm", se = TRUE) +
+  labs(
+    title = "Relationship Between Rainfall and Malaria Cases",
+    subtitle = paste("Correlation =", round(correlation, 3)),
+    x = "Mean Daily Rainfall (mm/day)",
+    y = "Number of Malaria Cases"
+  ) +
+  theme_minimal()
+            </code></pre>
+        </div>
+        
+        <div class="explanation">
+            <h4>🔍 Explanation:</h4>
+            <p>✔ CHIRPS provides high-resolution rainfall data that's useful for malaria research<br>
+            ✔ APIs allow programmatic access to regularly updated environmental data<br>
+            ✔ <code>raster</code> package handles spatial data like rainfall grids<br>
+            ✔ <code>extract()</code> gets values at specific points (e.g., health facilities)<br>
+            ✔ This approach enables integration of environmental and health data</p>
+        </div>
+        
+        <hr>
+        
+        <h3>Step 2: Accessing WorldPop Population Data</h3>
+        <div class="r-code">
+            <pre><code>
+# Access WorldPop API for population data
+# WorldPop provides high-resolution population maps
+
+# Function to download WorldPop data
+get_worldpop_data <- function(country_code, year, resolution = "100m") {
+  # Base URL for WorldPop API
+  base_url <- "https://www.worldpop.org/rest/data"
+  
+  # Build API request
+  api_url <- paste0(
+    base_url,
+    "?dataset=wpgp", year, country_code, resolution,
+    "&year=", year
+  )
+  
+  # Make API request to get dataset details
+  response <- GET(api_url)
+  
+  if (status_code(response) != 200) {
+    stop("API request failed with status code: ", status_code(response))
+  }
+  
+  # Parse response
+  dataset_info <- fromJSON(content(response, "text"))
+  
+  # Get the download URL for the population data
+  if (length(dataset_info$data) == 0) {
+    stop("No data found for the specified parameters")
+  }
+  
+  # Find the GeoTIFF file
+  file_index <- grep("\\.tif$", dataset_info$data$path, ignore.case = TRUE)
+  
+  if (length(file_index) == 0) {
+    stop("No GeoTIFF file found in the dataset")
+  }
+  
+  # Download URL
+  download_url <- paste0(
+    "https://www.worldpop.org",
+    dataset_info$data$path[file_index[1]]
+  )
+  
+  # Create a temporary file to store the download
+  temp_file <- tempfile(fileext = ".tif")
+  
+  # Download the file
+  cat("Downloading WorldPop data...\n")
+  download.file(download_url, temp_file, mode = "wb", quiet = TRUE)
+  
+  # Read the raster
+  population_raster <- raster(temp_file)
+  
+  # Clean up
+  unlink(temp_file)
+  
+  return(population_raster)
+}
+
+# Example usage
+# Get population data for Kenya for 2020
+kenya_population <- get_worldpop_data("KEN", 2020)
+
+# Plot the population data
+plot(kenya_population, main = "Population Density - Kenya 2020")
+
+# Crop to our area of interest
+area_of_interest <- extent(34.0, 35.5, -0.5, 1.0)  # Same as rainfall data
+kenya_pop_cropped <- crop(kenya_population, area_of_interest)
+
+# Convert to data frame for ggplot
+pop_df <- as.data.frame(kenya_pop_cropped, xy = TRUE)
+names(pop_df)[3] <- "population"
+
+# Create nicer visualization
+ggplot(pop_df, aes(x = x, y = y)) +
+  geom_raster(aes(fill = log10(population + 1))) +  # Log scale for better visualization
+  scale_fill_viridis_c(option = "viridis", name = "Log10 Population") +
+  labs(
+    title = "Population Density - Western Kenya",
+    subtitle = "Data from WorldPop (2020)",
+    x = "Longitude",
+    y = "Latitude"
+  ) +
+  theme_minimal() +
+  coord_fixed()
+
+# Extract population values for malaria sites
+sites_population <- extract(kenya_pop_cropped, sites_sp)
+malaria_sites$population_density <- sites_population
+
+# Combine with malaria and rainfall data
+combined_data <- combined_data %>%
+  left_join(
+    malaria_sites[, c("site_id", "population_density")],
+    by = c("site_id" = "site_id")
+  )
+
+# Calculate incidence rate
+combined_data <- combined_data %>%
+  mutate(
+    incidence_rate = (cases / population_density) * 1000,
+    # Cap extreme values for visualization
+    incidence_rate = pmin(incidence_rate, quantile(incidence_rate, 0.95, na.rm = TRUE))
+  )
+
+# Create a map of incidence rates
+ggplot() +
+  geom_raster(data = pop_df, aes(x = x, y = y, fill = log10(population + 1)), alpha = 0.3) +
+  scale_fill_viridis_c(option = "viridis", name = "Log10 Population") +
+  geom_point(data = combined_data, aes(x = longitude, y = latitude, size = incidence_rate, color = incidence_rate)) +
+  scale_size_continuous(name = "Incidence per 1000") +
+  scale_color_viridis_c(option = "plasma", name = "Incidence per 1000") +
+  labs(
+    title = "Malaria Incidence Rates in Western Kenya - January 2023",
+    subtitle = "Population data from WorldPop, Rainfall from CHIRPS",
+    x = "Longitude",
+    y = "Latitude"
+  ) +
+  theme_minimal() +
+  coord_fixed()
+            </code></pre>
+        </div>
+        
+        <div class="explanation">
+            <h4>🔍 Explanation:</h4>
+            <p>✔ WorldPop provides high-resolution population data useful for calculating incidence rates<br>
+            ✔ The <code>httr</code> package facilitates API requests in R<br>
+            ✔ <code>jsonlite</code> parses JSON responses from APIs<br>
+            ✔ Population density helps contextualize raw case counts<br>
+            ✔ Combining population, rainfall, and case data creates more informative visualizations</p>
+        </div>
+        
+        <hr>
+        
+        <h3>Step 3: Creating an API Data Pipeline</h3>
+        <div class="r-code">
+            <pre><code>
+# Create a data pipeline to automatically update environmental data
+# This can be scheduled to run regularly
+
+# Function to update environmental data for a specific time period
+update_environmental_data <- function(
+  start_date = Sys.Date() - 30,  # Default to last 30 days
+  end_date = Sys.Date(),
+  regions = NULL,
+  save_directory = "data/environmental"
+) {
+  # Create directory if it doesn't exist
+  dir.create(save_directory, recursive = TRUE, showWarnings = FALSE)
+  
+  # Format dates as strings
+  start_str <- format(as.Date(start_date), "%Y-%m-%d")
+  end_str <- format(as.Date(end_date), "%Y-%m-%d")
+  
+  # If no regions specified, use default study regions
+  if (is.null(regions)) {
+    regions <- data.frame(
+      name = c("Western", "Coastal", "Central", "Highland"),
+      min_lon = c(34.0, 39.0, 36.5, 35.0),
+      max_lon = c(35.5, 41.0, 38.0, 36.5),
+      min_lat = c(-0.5, -4.5, -1.0, -0.5),
+      max_lat = c(1.0, -2.5, 1.0, 1.0)
+    )
+  }
+  
+  # Initialize results list
+  results <- list()
+  
+  # Process each region
+  for (i in 1:nrow(regions)) {
+    region_name <- regions$name[i]
+    cat("Processing", region_name, "region...\n")
+    
+    # Get rainfall data from CHIRPS API
+    rainfall_data <- tryCatch({
+      get_chirps_data(
+        min_lon = regions$min_lon[i],
+        max_lon = regions$max_lon[i],
+        min_lat = regions$min_lat[i],
+        max_lat = regions$max_lat[i],
+        start_date = start_str,
+        end_date = end_str
+      )
+    }, error = function(e) {
+      warning("Failed to get CHIRPS data for ", region_name, ": ", e$message)
+      return(NULL)
+    })
+    
+    if (!is.null(rainfall_data)) {
+      # Calculate monthly average
+      rainfall_mean <- calc(rainfall_data, mean)
+      
+      # Save as GeoTIFF
+      rain_file <- file.path(
+        save_directory, 
+        paste0("rainfall_", region_name, "_", format(end_date, "%Y%m"), ".tif")
+      )
+      writeRaster(rainfall_mean, rain_file, overwrite = TRUE)
+      
+      # Add to results
+      results[[paste0(region_name, "_rainfall")]] <- rainfall_mean
+      
+      cat("  Rainfall data saved to", rain_file, "\n")
+    }
+    
+    # Get temperature data from another API (example only - replace with actual API)
+    # This is a placeholder for demonstration
+    temperature_data <- tryCatch({
+      # In a real scenario, you would call an API like NASA POWER or similar
+      # For this example, we'll create a dummy raster
+      r <- raster(
+        ncol = 30, nrow = 30,
+        xmn = regions$min_lon[i], xmx = regions$max_lon[i],
+        ymn = regions$min_lat[i], ymx = regions$max_lat[i]
+      )
+      values(r) <- runif(ncell(r), 20, 30)  # Random temperatures between 20-30°C
+      r
+    }, error = function(e) {
+      warning("Failed to get temperature data for ", region_name, ": ", e$message)
+      return(NULL)
+    })
+    
+    if (!is.null(temperature_data)) {
+      # Save as GeoTIFF
+      temp_file <- file.path(
+        save_directory, 
+        paste0("temperature_", region_name, "_", format(end_date, "%Y%m"), ".tif")
+      )
+      writeRaster(temperature_data, temp_file, overwrite = TRUE)
+      
+      # Add to results
+      results[[paste0(region_name, "_temperature")]] <- temperature_data
+      
+      cat("  Temperature data saved to", temp_file, "\n")
+    }
+  }
+  
+  # Create a metadata file
+  metadata <- data.frame(
+    region = rep(regions$name, 2),
+    data_type = c(rep("rainfall", nrow(regions)), rep("temperature", nrow(regions))),
+    start_date = rep(start_str, nrow(regions) * 2),
+    end_date = rep(end_str, nrow(regions) * 2),
+    file_path = c(
+      file.path(save_directory, paste0("rainfall_", regions$name, "_", format(end_date, "%Y%m"), ".tif")),
+      file.path(save_directory, paste0("temperature_", regions$name, "_", format(end_date, "%Y%m"), ".tif"))
+    ),
+    download_date = rep(Sys.time(), nrow(regions) * 2)
+  )
+  
+  # Save metadata
+  metadata_file <- file.path(save_directory, paste0("metadata_", format(end_date, "%Y%m"), ".csv"))
+  write.csv(metadata, metadata_file, row.names = FALSE)
+  
+  cat("Environmental data update complete. Metadata saved to", metadata_file, "\n")
+  
+  return(results)
+}
+
+# Function to update malaria site data with environmental variables
+update_site_data <- function(
+  site_data,
+  environmental_data_dir = "data/environmental",
+  output_file = "data/sites_with_environmental_data.csv"
+) {
+  # Ensure site data has required columns
+  required_cols <- c("site_id", "latitude", "longitude", "region")
+  missing_cols <- setdiff(required_cols, colnames(site_data))
+  
+  if (length(missing_cols) > 0) {
+    stop("Site data is missing required columns: ", paste(missing_cols, collapse = ", "))
+  }
+  
+  # Create a SpatialPointsDataFrame from site_data
+  sites_sp <- SpatialPointsDataFrame(
+    coords = site_data[, c("longitude", "latitude")],
+    data = site_data,
+    proj4string = CRS("+proj=longlat +datum=WGS84")
+  )
+  
+  # Get the latest environmental data files
+  env_files <- list.files(environmental_data_dir, pattern = "\\.tif$", full.names = TRUE)
+  
+  # Group files by type and region
+  file_info <- data.frame(
+    file = env_files,
+    basename = basename(env_files)
+  )
+  
+  file_info$type <- ifelse(
+    grepl("rainfall", file_info$basename), "rainfall",
+    ifelse(grepl("temperature", file_info$basename), "temperature", "other")
+  )
+  
+  file_info$region <- gsub(".*_(.*?)_\\d{6}\\.tif", "\\1", file_info$basename)
+  file_info$date <- gsub(".*_(\\d{6})\\.tif", "\\1", file_info$basename)
+  
+  # Get the most recent date
+  latest_date <- max(file_info$date)
+  latest_files <- subset(file_info, date == latest_date)
+  
+  # Initialize columns for environmental data
+  site_data$rainfall <- NA
+  site_data$temperature <- NA
+  
+  # Process each region
+  for (region in unique(site_data$region)) {
+    # Get sites in this region
+    region_sites <- subset(sites_sp, region == region)
+    
+    if (nrow(region_sites) == 0) {
+      next
+    }
+    
+    # Get environmental files for this region
+    region_rainfall_file <- subset(latest_files, type == "rainfall" & region == region)$file
+    region_temperature_file <- subset(latest_files, type == "temperature" & region == region)$file
+    
+    # Extract values if files exist
+    if (length(region_rainfall_file) > 0 && file.exists(region_rainfall_file)) {
+      rainfall_raster <- raster(region_rainfall_file)
+      region_rainfall <- extract(rainfall_raster, region_sites)
+      site_data$rainfall[site_data$region == region] <- region_rainfall
+    }
+    
+    if (length(region_temperature_file) > 0 && file.exists(region_temperature_file)) {
+      temperature_raster <- raster(region_temperature_file)
+      region_temperature <- extract(temperature_raster, region_sites)
+      site_data$temperature[site_data$region == region] <- region_temperature
+    }
+  }
+  
+  # Add update timestamp
+  site_data$last_updated <- Sys.time()
+  site_data$env_data_date <- latest_date
+  
+  # Save updated data
+  write.csv(site_data, output_file, row.names = FALSE)
+  
+  cat("Site data updated with environmental variables and saved to", output_file, "\n")
+  
+  return(site_data)
+}
+
+# Example usage
+# Update environmental data for last month
+last_month_start <- floor_date(Sys.Date() - days(30), "month")
+last_month_end <- ceiling_date(last_month_start, "month") - days(1)
+
+env_data <- update_environmental_data(
+  start_date = last_month_start,
+  end_date = last_month_end
+)
+
+# Update site data with environmental variables
+sites <- read.csv("malaria_sites.csv")
+updated_sites <- update_site_data(sites)
+
+# Schedule the updates to run monthly
+cat('
+# Auto-generated environmental data update script
+library(lubridate)
+
+# Calculate last month date range
+last_month_start <- floor_date(Sys.Date() - days(30), "month")
+last_month_end <- ceiling_date(last_month_start, "month") - days(1)
+
+# Update environmental data
+update_environmental_data(
+  start_date = last_month_start,
+  end_date = last_month_end
+)
+
+# Update site data
+sites <- read.csv("malaria_sites.csv")
+update_site_data(sites)
+', file = "update_environmental_data.R")
+
+# Schedule task to run on the 5th day of each month
+taskscheduler_create(
+  taskname = "MonthlyEnvironmentalUpdate",
+  rscript = "update_environmental_data.R",
+  schedule = "MONTHLY", 
+  starttime = "04:00",
+  startdate = format(Sys.Date(), "%m/%d/%Y"),
+  days = 5  # Run on 5th day of month
+)
+            </code></pre>
+        </div>
+        
+        <div class="explanation">
+            <h4>🔍 Explanation:</h4>
+            <p>✔ A data pipeline automates downloading, processing, and integrating data<br>
+            ✔ This approach ensures consistent environmental data for all analysis steps<br>
+            ✔ <code>raster</code> functions like <code>writeRaster()</code> save spatial data for later use<br>
+            ✔ Metadata tracking helps document data sources and processing steps<br>
+            ✔ Scheduled execution ensures data is regularly updated without manual intervention</p>
+        </div>
+        
+        <hr>
+        
+        <h3>Step 4: Integrating Multiple API Data Sources</h3>
+        <div class="r-code">
+            <pre><code>
+# Create a comprehensive malaria analysis pipeline
+# This combines data from multiple sources
+
+# Function to create a comprehensive dataset
+create_malaria_analysis_dataset <- function(
+  year = format(Sys.Date(), "%Y"),
+  month = as.numeric(format(Sys.Date(), "%m")) - 1,  # Previous month
+  output_file = "data/analysis/malaria_analysis_dataset.csv"
+) {
+  # Format date and create directory
+  if (month == 0) {
+    month <- 12
+    year <- as.numeric(year) - 1
+  }
+  
+  analysis_date <- as.Date(paste(year, month, "01", sep = "-"))
+  dir.create(dirname(output_file), recursive = TRUE, showWarnings = FALSE)
+  
+  cat("Creating comprehensive analysis dataset for", month.name[month], year, "\n")
+  
+  # 1. Load malaria case data
+  cat("Loading malaria case data...\n")
+  malaria_file <- file.path("data/cases", paste0("malaria_", year, "_", sprintf("%02d", month), ".csv"))
+  
+  if (!file.exists(malaria_file)) {
+    stop("Malaria case data not found for ", month.name[month], " ", year)
+  }
+  
+  malaria_data <- read.csv(malaria_file)
+  
+  # 2. Load site data with environmental variables
+  cat("Loading site data with environmental variables...\n")
+  site_data <- read.csv("data/sites_with_environmental_data.csv")
+  
+  # 3. Merge the datasets
+  cat("Merging datasets...\n")
+  analysis_data <- left_join(
+    malaria_data,
+    site_data,
+    by = "site_id"
+  )
+  
+  # 4. Calculate additional variables
+  cat("Calculating additional variables...\n")
+  analysis_data <- analysis_data %>%
+    mutate(
+      # Calculate incidence rate
+      incidence_rate = (cases / population_density) * 1000,
+      
+      # Categorize rainfall
+      rainfall_category = case_when(
+        rainfall < 50 ~ "Low",
+        rainfall < 150 ~ "Moderate",
+        TRUE ~ "High"
+      ),
+      
+      # Categorize temperature
+      temperature_category = case_when(
+        temperature < 22 ~ "Cool",
+        temperature < 26 ~ "Moderate",
+        TRUE ~ "Hot"
+      ),
+      
+      # Create risk score (example formula - customize based on your needs)
+      risk_score = (0.4 * scale(cases)[,1]) + 
+                   (0.3 * scale(rainfall)[,1]) + 
+                   (0.2 * scale(temperature)[,1]) + 
+                   (0.1 * scale(population_density)[,1]),
+      
+      # Risk level based on score
+      risk_level = case_when(
+        risk_score > 1 ~ "High",
+        risk_score > 0 ~ "Moderate",
+        TRUE ~ "Low"
+      ),
+      
+      # Add analysis date
+      analysis_date = as.character(Sys.Date())
+    )
+  
+  # 5. Save the comprehensive dataset
+  cat("Saving comprehensive analysis dataset...\n")
+  write.csv(analysis_data, output_file, row.names = FALSE)
+  
+  # 6. Create metadata file
+  metadata <- data.frame(
+    dataset_name = "Comprehensive Malaria Analysis Dataset",
+    period = paste(month.name[month], year),
+    created_date = Sys.Date(),
+    num_records = nrow(analysis_data),
+    variables = paste(colnames(analysis_data), collapse = ", "),
+    data_sources = "Malaria cases, CHIRPS rainfall, WorldPop, temperature estimates",
+    notes = "Integrated dataset for comprehensive malaria analysis"
+  )
+  
+  metadata_file <- file.path(dirname(output_file), 
+                            paste0("metadata_", year, "_", sprintf("%02d", month), ".csv"))
+  write.csv(metadata, metadata_file, row.names = FALSE)
+  
+  cat("Comprehensive analysis dataset created and saved to", output_file, "\n")
+  cat("Metadata saved to", metadata_file, "\n")
+  
+  return(analysis_data)
+}
+
+# Function to generate summary statistics for the dashboard
+generate_dashboard_data <- function(
+  analysis_data,
+  output_dir = "dashboard/data"
+) {
+  # Create output directory
+  dir.create(output_dir, recursive = TRUE, showWarnings = FALSE)
+  
+  # Create summary datasets for the dashboard
+  
+  # 1. Regional summary
+  regional_summary <- analysis_data %>%
+    group_by(region) %>%
+    summarize(
+      total_cases = sum(cases, na.rm = TRUE),
+      avg_incidence = mean(incidence_rate, na.rm = TRUE),
+      avg_rainfall = mean(rainfall, na.rm = TRUE),
+      avg_temperature = mean(temperature, na.rm = TRUE),
+      high_risk_sites = sum(risk_level == "High", na.rm = TRUE),
+      num_sites = n()
+    ) %>%
+    mutate(
+      high_risk_percent = round((high_risk_sites / num_sites) * 100, 1)
+    )
+  
+  write.csv(regional_summary, 
+           file.path(output_dir, "regional_summary.csv"),
+           row.names = FALSE)
+  
+  # 2. Risk factor correlation data
+  risk_correlations <- data.frame(
+    factor = c("Rainfall", "Temperature", "Population Density"),
+    correlation = c(
+      cor(analysis_data$cases, analysis_data$rainfall, use = "complete.obs"),
+      cor(analysis_data$cases, analysis_data$temperature, use = "complete.obs"),
+      cor(analysis_data$cases, analysis_data$population_density, use = "complete.obs")
+    )
+  ) %>%
+    mutate(
+      abs_correlation = abs(correlation),
+      direction = ifelse(correlation > 0, "Positive", "Negative")
+    ) %>%
+    arrange(desc(abs_correlation))
+  
+  write.csv(risk_correlations,
+           file.path(output_dir, "risk_correlations.csv"),
+           row.names = FALSE)
+  
+  # 3. Top high-risk sites
+  high_risk_sites <- analysis_data %>%
+    filter(risk_level == "High") %>%
+    arrange(desc(cases)) %>%
+    select(site_id, location, region, cases, incidence_rate, 
+           rainfall, temperature, risk_score) %>%
+    head(20)  # Top 20 high-risk sites
+  
+  write.csv(high_risk_sites,
+           file.path(output_dir, "high_risk_sites.csv"),
+           row.names = FALSE)
+  
+  # 4. Risk distribution by category
+  risk_distribution <- analysis_data %>%
+    group_by(rainfall_category, temperature_category) %>%
+    summarize(
+      avg_cases = mean(cases, na.rm = TRUE),
+      num_sites = n(),
+      high_risk_count = sum(risk_level == "High", na.rm = TRUE)
+    ) %>%
+    mutate(
+      high_risk_percent = round((high_risk_count / num_sites) * 100, 1)
+    )
+  
+  write.csv(risk_distribution,
+           file.path(output_dir, "risk_distribution.csv"),
+           row.names = FALSE)
+  
+  # 5. Generate GeoJSON for mapping
+  if (requireNamespace("sf", quietly = TRUE) && 
+      requireNamespace("geojsonio", quietly = TRUE)) {
+    library(sf)
+    library(geojsonio)
+    
+    # Create spatial data
+    sites_sf <- st_as_sf(
+      analysis_data,
+      coords = c("longitude", "latitude"),
+      crs = 4326
+    )
+    
+    # Convert to GeoJSON
+    geojson_write(
+      sites_sf,
+      file = file.path(output_dir, "sites.geojson")
+    )
+  } else {
+    warning("Packages 'sf' and 'geojsonio' are required for GeoJSON export")
+  }
+  
+  cat("Dashboard data generated and saved to", output_dir, "\n")
+}
+
+# Create master function to run the entire pipeline
+run_malaria_analysis_pipeline <- function(
+  year = format(Sys.Date(), "%Y"),
+  month = as.numeric(format(Sys.Date(), "%m")) - 1
+) {
+  tryCatch({
+    # Step 1: Update environmental data
+    cat("Step 1: Updating environmental data...\n")
+    start_date <- as.Date(paste(year, month, "01", sep = "-"))
+    end_date <- ceiling_date(start_date, "month") - days(1)
+    
+    update_environmental_data(
+      start_date = start_date,
+      end_date = end_date
+    )
+    
+    # Step 2: Update site data with environmental variables
+    cat("\nStep 2: Updating site data with environmental variables...\n")
+    sites <- read.csv("malaria_sites.csv")
+    update_site_data(sites)
+    
+    # Step 3: Create comprehensive analysis dataset
+    cat("\nStep 3: Creating comprehensive analysis dataset...\n")
+    analysis_data <- create_malaria_analysis_dataset(
+      year = year,
+      month = month
+    )
+    
+    # Step 4: Generate dashboard data
+    cat("\nStep 4: Generating dashboard data...\n")
+    generate_dashboard_data(analysis_data)
+    
+    # Step 5: Generate reports
+    cat("\nStep 5: Generating reports...\n")
+    generate_monthly_reports(
+      year = as.numeric(year),
+      month = as.numeric(month)
+    )
+    
+    cat("\nMalaria analysis pipeline completed successfully!\n")
+    
+    return(TRUE)
+  }, error = function(e) {
+    cat("\nError in malaria analysis pipeline:\n", e$message, "\n")
+    return(FALSE)
+  })
+}
+
+# Schedule the complete pipeline
+cat('
+# Auto-generated comprehensive malaria analysis pipeline
+library(lubridate)
+
+# Determine previous month
+current_date <- Sys.Date()
+prev_month <- month(current_date) - 1
+prev_year <- year(current_date)
+
+if (prev_month == 0) {
+  prev_month <- 12
+  prev_year <- prev_year - 1
+}
+
+# Run the complete pipeline
+run_malaria_analysis_pipeline(
+  year = as.character(prev_year),
+  month = prev_month
+)
+', file = "run_malaria_pipeline.R")
+
+# Schedule task to run on the 7th day of each month (after data collection)
+taskscheduler_create(
+  taskname = "MonthlyMalariaPipeline",
+  rscript = "run_malaria_pipeline.R",
+  schedule = "MONTHLY", 
+  starttime = "01:00",  # Early morning to avoid conflicts
+  startdate = format(Sys.Date(), "%m/%d/%Y"),
+  days = 7  # Run on 7th day of month
+)
+            </code></pre>
+        </div>
+        
+        <div class="explanation">
+            <h4>🔍 Explanation:</h4>
+            <p>✔ A comprehensive data pipeline combines multiple data sources into an integrated workflow<br>
+            ✔ Each function handles a specific part of the process, making the code modular and maintainable<br>
+            ✔ Scheduled tasks ensure the entire workflow runs automatically at appropriate intervals<br>
+            ✔ Metadata tracking documents data sources, transformations, and analysis steps<br>
+            ✔ This approach enables reproducible analysis and ensures consistency across reports</p>
+        </div>
+        
+        <hr>
+        
+        <h2 id="summary">✅ Summary of Week 9</h2>
+        <p>By the end of this week, you should be able to:</p>
+        
+        <h3>Functions and Loops</h3>
+        <ul>
+            <li>✔ Create custom functions to automate repetitive tasks in malaria data processing</li>
+            <li>✔ Use loops and apply functions to efficiently process multiple datasets</li>
+            <li>✔ Implement functional programming techniques with purrr for cleaner, more efficient code</li>
+            <li>✔ Organize your code into modular, reusable components</li>
+        </ul>
+        
+        <h3>R Markdown Reports</h3>
+        <ul>
+            <li>✔ Create dynamic reports that combine code, analysis, and visualization</li>
+            <li>✔ Use parameterized reports to generate customized outputs for different regions or time periods</li>
+            <li>✔ Automate report generation with scheduled scripts</li>
+            <li>✔ Distribute reports to stakeholders using automated emails</li>
+        </ul>
+        
+        <h3>API Data</h3>
+        <ul>
+            <li>✔ Access environmental data from APIs such as CHIRPS (rainfall) and WorldPop (population)</li>
+            <li>✔ Process and integrate spatial data with malaria surveillance information</li>
+            <li>✔ Create data pipelines to automate the collection and processing of external data</li>
+            <li>✔ Build comprehensive datasets that combine multiple data sources for integrated analysis</li>
+        </ul>
+        
+        <h3>Next Steps</h3>
+        <p>Now that you've learned to automate data processing and reporting, you can:</p>
+        <ul>
+            <li>👉 Apply these techniques to your own malaria surveillance work</li>
+            <li>👉 Expand your API usage to include other relevant data sources</li>
+            <li>👉 Create interactive dashboards using Shiny to visualize your automated data pipelines</li>
+            <li>👉 Develop predictive models that automatically update as new data becomes available</li>
+        </ul>
+        
+        <hr>
+        
+        <h3>Additional Resources</h3>
+        <ul>
+            <li>📚 <a href="https://r4ds.had.co.nz/functions.html">R for Data Science: Functions</a></li>
+            <li>📚 <a href="https://bookdown.org/yihui/rmarkdown/">R Markdown: The Definitive Guide</a></li>
+            <li>📚 <a href="https://httr.r-lib.org/">httr package documentation</a> for working with APIs</li>
+            <li>📚 <a href="https://rspatial.org/raster/index.html">Spatial Data Science with R</a> for working with spatial data</li>
+            <li>📚 <a href="https://cran.r-project.org/web/packages/taskscheduleR/index.html">taskscheduleR documentation</a> for automating R scripts</li>
+        </ul>
+        
+    </div>
+    
+    <script src="script.js"></script>
+</body>
